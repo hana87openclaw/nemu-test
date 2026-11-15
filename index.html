@@ -110,7 +110,9 @@
   var FS = [
   "precision highp float;",
   "uniform vec2 uRes; uniform float uTime, uBreath, uDim, uCalm, uTouch, uUser;",
-  "uniform float uTex, uStar, uCloud, uMist, uSpark, uPop, uDetail;",
+  "uniform float uTex, uStar, uCloud, uMist, uSpark, uPop, uDetail, uGustAmp;",
+  "uniform float uG0,uG1,uG2,uG3,uG4,uG5;",
+  "const mat2 R0=mat2(.8,-.6,.6,.8);",
   "float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}",
   "vec2 hash2(vec2 p){return vec2(hash(p),hash(p+17.17));}",
   "float noise(vec2 p){vec2 i=floor(p),f=fract(p);vec2 u=f*f*(3.-2.*f);",
@@ -118,7 +120,7 @@
   "float fbm(vec2 p){float v=0.,a=.5;mat2 r=mat2(.8,-.6,.6,.8);for(int i=0;i<5;i++){v+=a*noise(p);p=r*p*2.03;a*=.5;}return v;}",
   "float fbm7(vec2 p,float det){float v=0.,a=.5;mat2 r=mat2(.8,-.6,.6,.8);for(int i=0;i<7;i++){float w=i>=4?det:1.0;v+=a*w*(noise(p)-0.5);p=r*p*2.07;a*=.52;}return v+0.5;}",
   // 水面の高さ:奥から寄せる大きなうねり+大小のさざ波(遠くで見分けられない細かさは消す)
-  "float waveH(vec2 W,float t,float fx,float fz,float calm){",
+  "float waveH(vec2 W,float t,float fx,float fz,float calm,float g){",
   " float h=0.06*mix(1.0,0.7,calm)*sin(W.y*3.0+t*0.50+1.6*noise(W*vec2(0.5,0.8)));",
   " float a=0.20,f=7.0; mat2 R=mat2(.8,-.6,.6,.8); vec2 p=W*vec2(0.65,1.0);",
   " for(int i=0;i<6;i++){",
@@ -128,7 +130,23 @@
   "  h+=a*fade*lv*(noise(p*f+vec2(t*0.22*(1.0+fi*0.35),-t*0.30*(1.0+fi*0.2)))*2.0-1.0);",
   "  p=R*p; f*=1.95; a*=0.55;",
   " }",
+  // 息の風:手前から奥へ吹き抜ける細かいさざ波(風の当たる所はまだらになる)
+  " if(g>0.001){",
+  "  float patch=smoothstep(0.25,0.75,noise(W*vec2(1.6,0.9)+vec2(0.0,-t*0.35)));",
+  "  float nr=clamp((0.16/max(W.y,0.17)-0.01)/0.56,0.,1.);",
+  "  float gf=11.0*(1.0+2.5*nr); float ga=0.30*g*(0.25+0.75*patch)/(1.0+1.5*nr);",
+  "  float fd=smoothstep(0.9,0.25,gf*max(fx,fz*0.12)); float fd2=smoothstep(0.9,0.25,gf*1.9*max(fx,fz*0.12));",
+  "  h+=ga*fd*(noise(W*vec2(gf*0.8,gf)+vec2(0.0,-t*2.2))*2.0-1.0);",
+  "  h+=ga*0.6*fd2*(noise(R0*W*gf*1.9+vec2(0.0,-t*3.0))*2.0-1.0);",
+  " }",
   " return h;",
+  "}",
+  "float gustAt(float near){",   // 画面の手前(near=1)ほど早く、奥ほど遅れて風が届く
+  " float d=(1.0-near)*5.0;",
+  " float i0=floor(d); float f=d-i0;",
+  " float a= i0<0.5?uG0: i0<1.5?uG1: i0<2.5?uG2: i0<3.5?uG3: i0<4.5?uG4:uG5;",
+  " float b= i0<0.5?uG1: i0<1.5?uG2: i0<2.5?uG3: i0<3.5?uG4:uG5;",
+  " return mix(a,b,f)*uGustAmp;",
   "}",
   "float slopeN(float fx,float fz){float s=0.06*3.0,a=0.20,f=7.0;for(int i=0;i<6;i++){float lv=i>=3?uDetail:1.0;s+=a*f*lv*smoothstep(0.9,0.25,f*max(fx,fz*0.12));f*=1.95;a*=0.55;}return s;}",
   "void main(){",
@@ -181,21 +199,23 @@
   "  float fx=asp*z/uRes.x*1.5; float fz=0.16/((dz+0.01)*(dz+0.01))/uRes.y*1.5;",
   "  vec2 W=vec2(xw,z);",
   "  float ex=max(fx,0.003), ez=max(fz,0.003);",
-  "  float hC=waveH(W,t,fx,fz,uCalm);",
-  "  float sz=(waveH(W+vec2(0.,ez),t,fx,fz,uCalm)-waveH(W-vec2(0.,ez),t,fx,fz,uCalm))/(2.0*ez);",
-  "  float sx=(waveH(W+vec2(ex,0.),t,fx,fz,uCalm)-waveH(W-vec2(ex,0.),t,fx,fz,uCalm))/(2.0*ex);",
+  "  float g=gustAt(near);",
+  "  float hC=waveH(W,t,fx,fz,uCalm,g);",
+  "  float sz=(waveH(W+vec2(0.,ez),t,fx,fz,uCalm,g)-waveH(W-vec2(0.,ez),t,fx,fz,uCalm,g))/(2.0*ez);",
+  "  float sx=(waveH(W+vec2(ex,0.),t,fx,fz,uCalm,g)-waveH(W-vec2(ex,0.),t,fx,fz,uCalm,g))/(2.0*ex);",
   "  vec3 sea=mix(vec3(0.0025,0.0017,0.0016),vec3(0.0007,0.0006,0.0009),near)*(0.85+0.5*clamp(hC,-0.5,0.5));",
-  "  float width=mix(0.022,0.12,pow(near,0.8))*(1.0+0.40*br+0.20*tc+0.25*uUser);",
+  "  float width=mix(0.022,0.12,pow(near,0.8))*(1.0+0.40*br+0.20*tc);",
   "  float lat=px/width;",
   "  float path=exp(-lat*lat*1.1);",
   // 月の方へ傾いた面だけが光る(傾きが合う所が群れになって砕ける)
   "  float S=max(slopeN(fx,fz),0.15);",
   "  float tilt=(sz - 0.5*sx*sign(px)*clamp(abs(lat),0.,1.))/S;",
-  "  float th=mix(0.42,0.16,path)+0.14*near-0.06*uUser-0.03*br;",
+  "  float S2=S+0.3*g*11.0*0.30*smoothstep(0.9,0.25,11.0*max(fx,fz*0.12));",
+  "  float th=(mix(0.42,0.16,path)+0.14*near-0.03*br)*S2/S;",
   "  float glint=smoothstep(th,th+0.14,tilt);",
   "  float hzFade=smoothstep(0.0,0.03,dz);",
   "  float k=mix(0.32,0.10,pow(near,0.6));",
-  "  col=sea+moonCol*k*hzFade*(path*0.10 + exp(-lat*lat*0.5)*glint*(0.9+0.3*uUser));",
+  "  col=sea+moonCol*k*hzFade*(path*0.10 + exp(-lat*lat*0.5)*glint);",
   "  col+=moonCol*0.020*exp(-dz*120.0)*exp(-px*px*18.0);",
   "  col+=vec3(0.010,0.0062,0.0042)*exp(-dz*30.0)*0.5;",
   " }",
@@ -214,26 +234,29 @@
   var buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
   var loc=gl.getAttribLocation(pr,"p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
-  var U={}; ["uRes","uTime","uBreath","uDim","uCalm","uTouch","uUser","uTex","uStar","uCloud","uMist","uSpark","uPop","uDetail"].forEach(function(n){U[n]=gl.getUniformLocation(pr,n);});
+  var U={}; ["uRes","uTime","uBreath","uDim","uCalm","uTouch","uUser","uTex","uStar","uCloud","uMist","uSpark","uPop","uDetail","uGustAmp","uG0","uG1","uG2","uG3","uG4","uG5"].forEach(function(n){U[n]=gl.getUniformLocation(pr,n);});
   var scale=Math.min(window.devicePixelRatio||1,2);
   function resize(){ var w=Math.round(canvas.clientWidth*scale),h=Math.round(canvas.clientHeight*scale); if(!w||!h) return; if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);} }
   addEventListener("resize",resize); if(window.visualViewport) visualViewport.addEventListener("resize",resize); resize();
 
   var LEVELS={1:[1,0,0,0.5,0.6,0],2:[1,0.6,0.6,0.8,0.85,0],3:[1,1,1,1,1,0],4:[1,1,1,1,1,1]};   // 月の模様,星,雲,霧,光の粒
-  var LV=LEVELS[3]; var DET=parseFloat(P.get("detail")||"0.5");
+  var LV=LEVELS[3]; var DET=parseFloat(P.get("detail")||"0.5"); var GUST=parseFloat(P.get("gust")||"1");
+  var gustHist=[]; function gustPush(v){ gustHist.push(v); if(gustHist.length>40) gustHist.shift(); }
+  function gustDelay(sec){ var k=gustHist.length-1-Math.round(sec*10); return k>=0?gustHist[k]:0; }
   function draw(t,guide,user,dim,touch){
-    gl.uniform1f(U.uTex,LV[0]); gl.uniform1f(U.uStar,LV[1]); gl.uniform1f(U.uCloud,LV[2]); gl.uniform1f(U.uMist,LV[3]); gl.uniform1f(U.uSpark,LV[4]); gl.uniform1f(U.uPop,LV[5]); gl.uniform1f(U.uDetail,DET);
+    gl.uniform1f(U.uTex,LV[0]); gl.uniform1f(U.uStar,LV[1]); gl.uniform1f(U.uCloud,LV[2]); gl.uniform1f(U.uMist,LV[3]); gl.uniform1f(U.uSpark,LV[4]); gl.uniform1f(U.uPop,LV[5]); gl.uniform1f(U.uDetail,DET); gl.uniform1f(U.uGustAmp,GUST); for(var gi=0;gi<6;gi++) gl.uniform1f(U["uG"+gi],gustDelay(gi*0.5));
     gl.uniform2f(U.uRes,canvas.width,canvas.height); gl.uniform1f(U.uTime,t); gl.uniform1f(U.uBreath,guide);
     gl.uniform1f(U.uDim,dim); gl.uniform1f(U.uCalm,calmValue(t)); gl.uniform1f(U.uTouch,touch); gl.uniform1f(U.uUser,user);
     gl.drawArrays(gl.TRIANGLES,0,3);
   }
 
   // 画面に出す「あなたの息」:拾った音にゆっくり寄り添う(パッと反応させない)
-  var userShown=0, userWeight=0;
+  var userShown=0, userWeight=0, gustAcc=0;
   function followUser(env,dt){
     var w = (Sensor.on && (Sensor.conf>0.35 || Sensor.snr>2.5)) ? 1 : 0;   // 息の音がはっきり聞こえている時だけ
     userWeight += (w-userWeight)*Math.min(1,dt/(w>userWeight?1.5:6));      // 出る時は1.5秒、消える時は6秒かけて
     userShown += (env-userShown)*Math.min(1,dt/0.6);
+    gustAcc+=dt; while(gustAcc>=0.1){ gustAcc-=0.1; gustPush(userShown*userWeight); }   // 0.1秒ごとに「風」の強さを記録
     return userShown*userWeight + 0.35*(1-userWeight);
   }
 
@@ -255,7 +278,8 @@
     };
     window.capDraw=function(){ resize(); draw(simT, Pacer.value(), userShown*userWeight+0.35*(1-userWeight), dimValue(simT), 0); return true; };
     window.capFollow=function(dt){ return followUser(Sensor.env,dt); };
-    Pacer.begin(true);
+    Pacer.begin(true); Sensor.on=true;   // 確認用:疑似の息をマイクの代わりに使う
+    window.setGust=function(a){ gustHist=a.slice(); };
     window.renderAt=function(t,user){ resize(); draw(t, 0.6, user==null?0.6:user, 1, 0); return true; };
     window.nemuReady=true;
     return;
