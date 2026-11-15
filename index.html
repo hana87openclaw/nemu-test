@@ -9,7 +9,8 @@
 <title>NEMU 試作 月明かりの水面 自然な細かさ版</title>
 <style>
   html,body{margin:0;height:100%;background:#000;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none}
-  canvas{position:fixed;inset:0;width:100vw;height:100vh;display:block}
+  canvas{position:fixed;left:0;top:0;width:100%;height:100%;display:block}
+  #dbg{position:fixed;left:8px;top:8px;color:#9cf;font:12px/1.4 monospace;white-space:pre;pointer-events:none;z-index:9}
   #start{position:fixed;left:0;right:0;bottom:16vh;text-align:center;color:rgba(255,214,170,.55);
     font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans CJK JP","Noto Sans JP",sans-serif;
     font-size:15px;letter-spacing:.12em;transition:opacity 2.5s ease;pointer-events:none}
@@ -18,6 +19,7 @@
 <body>
 <canvas id="c"></canvas>
 <div id="start" lang="ja">画面に触れてはじめる</div>
+<div id="dbg"></div>
 <script>
 (function(){
   "use strict";
@@ -28,21 +30,24 @@
 
   // ===== 息を拾う =====
   var Sensor = {
-    on:false, level:0, floor:0, peak:0, env:0, hist:[], acc:0, period:0, conf:0, sinceEst:0,
-    start:function(){
+    on:false, level:0, floor:0, peak:0, env:0, snr:1, hist:[], acc:0, period:0, conf:0, sinceEst:0, status:"未開始",
+    start:function(){                // 画面に触れた瞬間に呼ぶ(iPhoneは触れた瞬間でないと音の処理を始められない)
       var self=this;
-      if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia) return Promise.resolve(false);
+      var AC=window.AudioContext||window.webkitAudioContext;
+      if(!AC||!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ self.status="非対応"; return Promise.resolve(false); }
+      var ctx=new AC(); self.ctx=ctx; if(ctx.resume) ctx.resume();
+      self.status="許可待ち";
       return navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}}).then(function(stream){
-        var AC=window.AudioContext||window.webkitAudioContext; var ctx=new AC();
+        self.stream=stream;
         var src=ctx.createMediaStreamSource(stream);
         var hp=ctx.createBiquadFilter(); hp.type="highpass"; hp.frequency.value=150;
         var lp=ctx.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=3000;
         var an=ctx.createAnalyser(); an.fftSize=1024;
         src.connect(hp); hp.connect(lp); lp.connect(an);
-        self.an=an; self.buf=new Float32Array(an.fftSize); self.ctx=ctx; self.on=true;
-        if(ctx.state==="suspended") ctx.resume();
+        self.an=an; self.buf=new Float32Array(an.fftSize); self.on=true; self.status="使用中";
+        if(ctx.state!=="running") ctx.resume();
         return true;
-      }).catch(function(){ return false; });
+      }).catch(function(err){ self.status="使えない("+(err&&err.name||"")+")"; return false; });
     },
     rms:function(){ this.an.getFloatTimeDomainData(this.buf); var s=0,b=this.buf; for(var i=0;i<b.length;i++) s+=b[i]*b[i]; return Math.sqrt(s/b.length); },
     feed:function(r, dt){            // r: いまの音の強さ(実機ではマイク、確認時は疑似の息)
@@ -53,6 +58,7 @@
       if(L>this.peak) this.peak=L; else this.peak += (L-this.peak)*Math.min(1,dt/12);
       if(this.peak<this.floor*1.6) this.peak=this.floor*1.6;
       var e=(L-this.floor)/(this.peak-this.floor); this.env=Math.max(0,Math.min(1,e));
+      this.snr=this.peak/Math.max(this.floor,1e-7);   // 息の音が部屋の静けさの何倍あるか
       this.acc+=dt; while(this.acc>=0.1){ this.acc-=0.1; this.hist.push(this.env); if(this.hist.length>400) this.hist.shift(); }
       this.sinceEst+=dt; if(this.sinceEst>=1){ this.sinceEst=0; this.estimate(); }
     },
@@ -210,8 +216,8 @@
   var loc=gl.getAttribLocation(pr,"p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
   var U={}; ["uRes","uTime","uBreath","uDim","uCalm","uTouch","uUser","uTex","uStar","uCloud","uMist","uSpark","uPop","uDetail"].forEach(function(n){U[n]=gl.getUniformLocation(pr,n);});
   var scale=Math.min(window.devicePixelRatio||1,2);
-  function resize(){ var w=Math.round(innerWidth*scale),h=Math.round(innerHeight*scale); if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);} }
-  addEventListener("resize",resize); resize();
+  function resize(){ var w=Math.round(canvas.clientWidth*scale),h=Math.round(canvas.clientHeight*scale); if(!w||!h) return; if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);} }
+  addEventListener("resize",resize); if(window.visualViewport) visualViewport.addEventListener("resize",resize); resize();
 
   var LEVELS={1:[1,0,0,0.5,0.6,0],2:[1,0.6,0.6,0.8,0.85,0],3:[1,1,1,1,1,0],4:[1,1,1,1,1,1]};   // 月の模様,星,雲,霧,光の粒
   var LV=LEVELS[3]; var DET=parseFloat(P.get("detail")||"0.5");
@@ -225,8 +231,8 @@
   // 画面に出す「あなたの息」:拾った音にゆっくり寄り添う(パッと反応させない)
   var userShown=0, userWeight=0;
   function followUser(env,dt){
-    var w = (Sensor.on && Sensor.conf>0.35) ? 1 : 0;                 // 息がはっきり拾えている時だけ
-    userWeight += (w-userWeight)*Math.min(1,dt/6);                   // 6秒かけて切り替える
+    var w = (Sensor.on && (Sensor.conf>0.35 || Sensor.snr>2.5)) ? 1 : 0;   // 息の音がはっきり聞こえている時だけ
+    userWeight += (w-userWeight)*Math.min(1,dt/(w>userWeight?1.5:6));      // 出る時は1.5秒、消える時は6秒かけて
     userShown += (env-userShown)*Math.min(1,dt/0.6);
     return userShown*userWeight + 0.35*(1-userWeight);
   }
@@ -256,6 +262,7 @@
   }
 
   var startEl=document.getElementById("start");
+  var DEBUG=P.get("debug")==="1", dbgEl=document.getElementById("dbg");
   var started=false, t0=null, last=null, touch=0, touchTarget=0, wake=null;
   function begin(){
     if(started) return; started=true;
@@ -274,12 +281,14 @@
     touch += (touchTarget-touch)*Math.min(1,dt*2.5);
     if(!started){ draw(now/1000*0.2, 0.15, 0, 0.55, touch); requestAnimationFrame(frame); return; } // 始める前:静かに薄く
     if(t0===null) t0=now;
+    resize();
     var t=(now-t0)/1000;
     Sensor.update(dt);
     Pacer.step(dt, Sensor.period, Sensor.conf);
     var user = followUser(Sensor.env,dt);
     var dim = Math.min(1, t/4) * 0.45 + 0.55; dim = Math.min(dim, 1) * dimValue(t);   // 始めた直後はなめらかに明るく
     draw(t, Pacer.value(), user, dim, touch);
+    if(DEBUG){ dbgEl.textContent="マイク: "+Sensor.status+(Sensor.ctx?" / 音の処理: "+Sensor.ctx.state:"")+"\n音の強さ: "+(Sensor.level*1000).toFixed(2)+"  静けさ: "+(Sensor.floor*1000).toFixed(2)+"  倍率: "+Sensor.snr.toFixed(1)+"\n息の反応: "+userWeight.toFixed(2)+"  拾った速さ: "+(Sensor.period?(60/Sensor.period).toFixed(1):"-")+"回/分 ("+Sensor.conf.toFixed(2)+")\n見本: "+(60/Pacer.period).toFixed(1)+"回/分 "+Pacer.mode+"\n画面: "+canvas.width+"x"+canvas.height; }
     if(TEST && Math.floor(t)%5===0 && Math.floor(t)!==window._lastLog){ window._lastLog=Math.floor(t);
       console.log("LOG t="+t.toFixed(0)+" mode="+Pacer.mode+" guide/min="+(60/Pacer.period).toFixed(1)+" user/min="+(Sensor.period?(60/Sensor.period).toFixed(1):"-")+" conf="+Sensor.conf.toFixed(2)); }
     if(t>=SESSION){ gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT); if(wake) wake.release(); return; }
