@@ -27,12 +27,12 @@
 <div id="start" lang="ja">画面に触れてはじめる</div>
 <div id="dbg"></div>
 <div id="ui" lang="ja">
-  <div class="row"><span class="lb">息</span><button data-k="bra" data-v="0.3">弱</button><button data-k="bra" data-v="0.6" class="on">中</button><button data-k="bra" data-v="1.0">強</button></div>
+  <div class="row"><span class="lb">息</span><button data-k="lv" data-v="1">弱</button><button data-k="lv" data-v="2" class="on">中</button><button data-k="lv" data-v="3">強</button></div>
 </div>
 <script>
 (function(){
   "use strict";
-  var P = new URLSearchParams(location.search); window.PICK={bs:0.4,bra:0.6,ts:parseFloat(P.get("ts")||"0.0193"),life:parseFloat(P.get("life")||"3"),sig:parseFloat(P.get("sig")||"0.004"),spk:parseFloat(P.get("spk")||"1"),exp:parseFloat(P.get("exp")||"0.6")};
+  var P = new URLSearchParams(location.search); window.PICK={lv:parseFloat(P.get("lv")||"2"),bs:0.4,bra:parseFloat(P.get("bra")||"0"),ts:parseFloat(P.get("ts")||"0.0193"),life:parseFloat(P.get("life")||"3"),sig:parseFloat(P.get("sig")||"0.004"),spk:parseFloat(P.get("spk")||"1"),exp:parseFloat(P.get("exp")||"0.6"),wa:parseFloat(P.get("wa")||"0")};
   var SESSION = parseFloat(P.get("min") || "15") * 60;
   var CAPTURE = P.get("capture") === "1";   // 確認用:時刻を進めて1コマずつ描く
   var TEST    = P.get("test") === "1";      // 確認用:触れずにマイクを始める
@@ -120,7 +120,7 @@
   "precision highp float;",
   "uniform vec2 uRes; uniform float uTime, uBreath, uDim, uCalm, uTouch, uUser;",
   "uniform float uTex, uStar, uCloud, uMist, uSpark, uPop, uDetail, uGustAmp;",
-  "uniform float uG0,uG1,uG2,uG3,uG4,uG5; uniform float uSwell,uSK,uSV,uST,uExA,uTe,uBS,uBA,uBrE,uBrA,uTS,uLife,uSig,uSpk,uExp; uniform vec3 uRip[32];",
+  "uniform float uK,uSp,uGW,uTW,uMot; uniform float uG0,uG1,uG2,uG3,uG4,uG5; uniform float uSwell,uSK,uSV,uST,uExA,uTe,uBS,uBA,uBrE,uBrA,uTS,uLife,uSig,uSpk,uExp,uWA; uniform vec3 uRip[32];",
   "const mat2 R0=mat2(.8,-.6,.6,.8);",
   "float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}",
   "vec2 hash2(vec2 p){return vec2(hash(p),hash(p+17.17));}",
@@ -187,7 +187,21 @@
   " vec2 g=sqrt(-2.0*log(max(r1,1e-4)))*vec2(cos(6.2832*r2.x),sin(6.2832*r2.y));",   // 正規分布の傾き
   " vec2 dd=g*sig-sreq; return exp(-dot(dd,dd)/(2.0*dlt*dlt));",
   "}",
-  "void main(){",
+  // 追加の光の点:マスごとに出るきっかけ(しきい値)をずらし、少しずつ数が増える
+"float glitLayer(vec2 P,float l0,float lf,float t,float life,float seed,float csc,vec2 sreq,float sig,float dlt,float gate,float kf){",
+" float tl=t/life+seed; float s0=floor(tl); float fr=tl-s0; fr=fr*fr*(3.0-2.0*fr); float g=0.0;",
+" for(int q=0;q<2;q++){",
+"  float cs=0.01*exp2(l0+float(q))*csc; vec2 cp2=P/cs+float(q)*31.7+seed*13.1; vec2 ci=floor(cp2); vec2 cf=fract(cp2)-0.5;",
+"  float th=hash(ci+91.7)*0.4; float w=clamp((gate-th)/0.6,0.0,1.0); w=w*w*(3.0-2.0*w); w=w*w*w*step(hash(ci+33.3),kf);",
+"  if(w<=0.0) continue;",
+"  vec2 jit=hash2(ci+7.7)-0.5; vec2 off=cf-jit*0.5;",
+"  float shape=exp(-dot(off,off)/(2.0*0.08*0.08))/(2.0*3.1416*0.08*0.08);",
+"  float g1=mix(glitCell(ci,s0,sreq,sig,dlt),glitCell(ci,s0+1.0,sreq,sig,dlt),fr)*shape;",
+"  g+=w*g1*(q==0?1.0-lf:lf);",
+" }",
+" return g;",
+"}",
+"void main(){",
   " vec2 frag=gl_FragCoord.xy; vec2 uv=frag/uRes; float asp=uRes.x/uRes.y;",
   " float t=uTime; float hz=0.56;",
   " vec2 moonPos=vec2(0.5,0.80);",
@@ -250,7 +264,7 @@
   "   rw+=band*fade*sin((dist-front)/(0.0075*sc));",
   "  }",
   "  slE.y+=0.05*rw;",
-  "  float sig2=uSig+lost; float sig=sqrt(sig2);",
+  "  float sig20=uSig+lost; float sig2=sig20*(1.0+uWA*uBrE); float sig=sqrt(sig2);",
   "  vec3 n=normalize(vec3(-slE.x,1.0,-slE.y));",
   "  float cv=max(dot(-d,n),0.0);",
   // 空の映り込み(水平線ほど強く映る)
@@ -274,15 +288,21 @@
   "   float g1=mix(glitCell(ci,sl0,sreq,sig,dlt),glitCell(ci,sl0+1.0,sreq,sig,dlt),fr)*shape;",
   "   gl+=g1*(q==0?1.0-lf:lf);",
   "  }",
-  "  float cs=0.01*exp2(l0);",
+  "  float msk=smoothstep(0.42,0.68,noise(P*vec2(0.5,0.25)+vec2(3.1,-t*0.06))*0.7+noise(P*vec2(1.1,0.55)+vec2(-t*0.05,1.7))*0.3);",
+  "  float mk=mix(1.0,msk*3.0,uMot); float gt=min(1.0,uBrE*mk); float lX=mix(uLife,1.0,uTW); float cX=mix(1.0,0.7,uTW);",
+  "  float glX=glitLayer(P,l0,lf,t,lX,5.3,cX,sreq,sig,dlt,gt,min(uK,1.0))+glitLayer(P,l0,lf,t,lX,2.1,cX,sreq,sig,dlt,gt,clamp(uK-1.0,0.0,1.0))+glitLayer(P,l0,lf,t,lX,7.7,cX,sreq,sig,dlt,gt,clamp(uK-2.0,0.0,1.0));",
+"  float cs=0.01*exp2(l0);",
   "  float lod=smoothstep(0.6,0.15,fp/max(-d.y,0.02)*0.0+fp/2.5)*uSpk;",
   "  float stk=noise(vec2(P.x/(cs*14.0)+t*0.01,P.y/(cs*1.2)+0.3*sin(P.x/(cs*9.0))));",
   "  float streak=smoothstep(0.35,0.85,stk)*2.2;",
-  "  float G=mix(smoothG*mix(1.0,streak,smoothstep(0.0,0.6,1.0-lod)),gl,lod);",
+  "  float G=mix(smoothG*mix(1.0,streak,smoothstep(0.0,0.6,1.0-lod)),gl+glX,lod);",
+  "  G*=(sig2+dlt*dlt)/(sig20+dlt*dlt);",
   "  float hzFade=smoothstep(0.0,0.012,dz);",
   "  vec3 moonL=moonCol*uExp*Fm/max(4.0*max(cv,0.22)*pow(hv.y,4.0),0.05);",
   "  vec3 refl=moonL*G*hzFade;",
   "  float capL=0.26*0.55; refl=refl/(1.0+refl/(moonCol*capL));",
+  "  vec2 sreq0=vec2(-hv.x/hv.y,-hv.z/hv.y); float s2w=uSig*3.0+lost+dlt*dlt; float glowG=(dlt*dlt/s2w)*exp(-dot(sreq0,sreq0)/(2.0*s2w));",
+  "  vec3 gwl=moonL*glowG*hzFade*uGW*uBrE; gwl=gwl/(1.0+gwl/(moonCol*capL*0.5)); refl+=gwl*clamp(1.0-refl.r/(moonCol.r*capL),0.0,1.0);",
   "  col=sea+refl*(1.0+uBrA*uBrE);",
   "  col+=moonCol*0.011*max(0.0,rw)*hzFade;",
   "  col+=vec3(0.010,0.0062,0.0042)*exp(-dz*40.0)*0.45;",                    // 水平線のもや
@@ -303,13 +323,13 @@
   var buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
   var loc=gl.getAttribLocation(pr,"p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
-  var U={}; ["uRes","uTime","uBreath","uDim","uCalm","uTouch","uUser","uTex","uStar","uCloud","uMist","uSpark","uPop","uDetail","uGustAmp","uSwell","uSK","uSV","uST","uExA","uTe","uBS","uBA","uBrE","uBrA","uTS","uLife","uSig","uSpk","uExp","uRip","uG0","uG1","uG2","uG3","uG4","uG5"].forEach(function(n){U[n]=gl.getUniformLocation(pr,n);});
+  var U={}; ["uRes","uTime","uBreath","uDim","uCalm","uTouch","uUser","uTex","uStar","uCloud","uMist","uSpark","uPop","uDetail","uGustAmp","uSwell","uSK","uSV","uST","uExA","uTe","uBS","uBA","uBrE","uBrA","uTS","uLife","uSig","uSpk","uExp","uRip","uWA","uG0","uG1","uG2","uG3","uG4","uG5","uK","uSp","uGW","uTW","uMot"].forEach(function(n){U[n]=gl.getUniformLocation(pr,n);});
   var scale=Math.min(window.devicePixelRatio||1,2);
   function resize(){ var w=Math.round(canvas.clientWidth*scale),h=Math.round(canvas.clientHeight*scale); if(!w||!h) return; if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);} }
   addEventListener("resize",resize); if(window.visualViewport) visualViewport.addEventListener("resize",resize); resize();
 
   var LEVELS={1:[1,0,0,0.5,0.6,0],2:[1,0.6,0.6,0.8,0.85,0],3:[1,1,1,1,1,0],4:[1,1,1,1,1,1]};   // 月の模様,星,雲,霧,光の粒
-  var LV=LEVELS[3]; var DET=parseFloat(P.get("detail")||"0.5"); var GUST=parseFloat(P.get("gust")||"0"); var EXA=-1, EXTE=0; window.setExh=function(a,te){EXA=a;EXTE=te;}; var SWELL=0;
+  var LV=LEVELS[3]; var DET=parseFloat(P.get("detail")||"0.5"); var GUST=parseFloat(P.get("gust")||"0"); var EXA=-1, EXTE=0; window.setExh=function(a,te){EXA=a;EXTE=te;}; var SWELL=0; var SPR=0, KST=parseFloat(P.get("k")||"2"), GWV=parseFloat(P.get("gw")||"0.5");
   var gustHist=[]; function gustPush(v){ gustHist.push(v); if(gustHist.length>40) gustHist.shift(); }
   function gustDelay(sec){ var k=gustHist.length-1-Math.round(sec*10); return k>=0?gustHist[k]:0; }
   var ripArr=new Float32Array(96); for(var ri=0;ri<32;ri++) ripArr[ri*3+2]=-1; var ripN=0, ripLast=-9;
@@ -317,7 +337,7 @@
     var uy=1-cy, hz=0.56; if(uy>=hz-0.01) return;
     var k=(ripN++%32)*3; ripArr[k]=cx; ripArr[k+1]=uy; ripArr[k+2]=t; }
   function draw(t,guide,user,dim,touch){
-    gl.uniform1f(U.uTex,LV[0]); gl.uniform1f(U.uStar,LV[1]); gl.uniform1f(U.uCloud,LV[2]); gl.uniform1f(U.uMist,LV[3]); gl.uniform1f(U.uSpark,LV[4]); gl.uniform1f(U.uPop,LV[5]); gl.uniform1f(U.uDetail,DET); gl.uniform1f(U.uGustAmp,GUST); gl.uniform1f(U.uSwell,SWELL); gl.uniform1f(U.uSK,parseFloat(P.get("sk")||"38")); gl.uniform1f(U.uSV,parseFloat(P.get("sv")||"5")); gl.uniform1f(U.uExA,EXA); gl.uniform1f(U.uBS,window.PICK.bs); gl.uniform1f(U.uBA,parseFloat(P.get("ba")||"1")); var BRT=parseFloat(P.get("ti")||"1.6"); var bre=(window.MICBR!=null)?window.MICBR:0; if(window.MICBR==null&&EXA>=0&&EXTE>0){ var q; if(EXA<=EXTE){q=EXA/EXTE; bre=q*q*(3-2*q);} else if(EXA<=EXTE+BRT){q=(EXA-EXTE)/BRT; bre=1-q*q*(3-2*q);} } gl.uniform1f(U.uBrE,bre); gl.uniform1f(U.uBrA,window.PICK.bra); gl.uniform1f(U.uTS,window.PICK.ts); gl.uniform1f(U.uLife,window.PICK.life); gl.uniform1f(U.uSig,window.PICK.sig); gl.uniform1f(U.uSpk,window.PICK.spk); gl.uniform1f(U.uExp,window.PICK.exp); gl.uniform3fv(U.uRip,ripArr); gl.uniform1f(U.uTe,EXTE); gl.uniform1f(U.uST,parseFloat(P.get("st")||"0.22")); for(var gi=0;gi<6;gi++) gl.uniform1f(U["uG"+gi],gustDelay(gi*0.5));
+    gl.uniform1f(U.uTex,LV[0]); gl.uniform1f(U.uStar,LV[1]); gl.uniform1f(U.uCloud,LV[2]); gl.uniform1f(U.uMist,LV[3]); gl.uniform1f(U.uSpark,LV[4]); gl.uniform1f(U.uPop,LV[5]); gl.uniform1f(U.uDetail,DET); gl.uniform1f(U.uGustAmp,GUST); gl.uniform1f(U.uSwell,SWELL); gl.uniform1f(U.uSK,parseFloat(P.get("sk")||"38")); gl.uniform1f(U.uSV,parseFloat(P.get("sv")||"5")); gl.uniform1f(U.uExA,EXA); gl.uniform1f(U.uBS,window.PICK.bs); gl.uniform1f(U.uBA,parseFloat(P.get("ba")||"1")); var BRT=parseFloat(P.get("ti")||"1.6"); var bre=(window.MICBR!=null)?window.MICBR:0; if(window.MICBR==null&&EXA>=0&&EXTE>0){ var q; if(EXA<=EXTE){q=EXA/EXTE; bre=q*q*(3-2*q);} else if(EXA<=EXTE+BRT){q=(EXA-EXTE)/BRT; bre=1-q*q*(3-2*q);} } var TAU=parseFloat(P.get("tau")||(CAPTURE?"0":"1.5")); if(TAU>0){ var dtt=Math.max(0,t-(window._lt==null?t:window._lt)); window._lt=t; window._ag=Math.max(bre,(window._ag||0)*Math.exp(-dtt/TAU)); bre=window._ag; } if(bre<0.01) SPR=0; else SPR=Math.max(SPR,bre); gl.uniform1f(U.uBrE,bre); gl.uniform1f(U.uSp,SPR); if(!CAPTURE){ KST=[0,1,2,3][window.PICK.lv]; GWV=[0,0.3,0.8,1.6][window.PICK.lv]; } gl.uniform1f(U.uK,KST); gl.uniform1f(U.uGW,GWV); gl.uniform1f(U.uTW,parseFloat(P.get("tw")||"0")); gl.uniform1f(U.uMot,parseFloat(P.get("mot")||"0")); gl.uniform1f(U.uBrA,window.PICK.bra); gl.uniform1f(U.uTS,window.PICK.ts); gl.uniform1f(U.uLife,window.PICK.life); gl.uniform1f(U.uSig,window.PICK.sig); gl.uniform1f(U.uSpk,window.PICK.spk); gl.uniform1f(U.uExp,window.PICK.exp); gl.uniform1f(U.uWA,window.PICK.wa); gl.uniform3fv(U.uRip,ripArr); gl.uniform1f(U.uTe,EXTE); gl.uniform1f(U.uST,parseFloat(P.get("st")||"0.22")); for(var gi=0;gi<6;gi++) gl.uniform1f(U["uG"+gi],gustDelay(gi*0.5));
     gl.uniform2f(U.uRes,canvas.width,canvas.height); gl.uniform1f(U.uTime,t); gl.uniform1f(U.uBreath,guide);
     gl.uniform1f(U.uDim,dim); gl.uniform1f(U.uCalm,calmValue(t)); gl.uniform1f(U.uTouch,touch); gl.uniform1f(U.uUser,user);
     gl.drawArrays(gl.TRIANGLES,0,3);
